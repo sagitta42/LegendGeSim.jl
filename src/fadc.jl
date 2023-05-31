@@ -30,15 +30,15 @@ struct Struck <: FADC end
 """
     GenericFADC(sim_conf)
 
-PropDict -> GenericFADC
+LegendGeSimConfig -> GenericFADC
 
 Construct a GenericFADC instance based on simulation
     configuration <sim_conf>
 """
-function GenericFADC(sim_conf::PropDict)
+function GenericFADC(fadc_settings::PropDict)
     T = Float32 # This should be somehow defined and be passed properly
     GenericFADC(
-        Δt = haskey(sim_conf.setup.fadc, :sampling_rate) ? uconvert(u"ns", inv(T(sim_conf.setup.fadc.sampling_rate)u"MHz")) : T(sim_conf.setup.fadc.sampling_interval)u"ns",
+        Δt = haskey(fadc_settings, :sampling_rate) ? uconvert(u"ns", inv(T(fadc_settings.sampling_rate)u"MHz")) : T(fadc_settings.sampling_interval)u"ns",
     )
 end
 
@@ -46,20 +46,20 @@ end
 """
     FADC(sim_conf)
 
-PropDict -> <FADC>
+LegendGeSimConfig -> <FADC>
 
 Construct an FADC supertype instance based on simulation
     configuration <sim_conf>.
 Type of <FADC> depends on the type specified in <sim_conf>
     (e.g. generic, Flashcam, Struck)
 """
-function FADC(sim_conf::PropDict)
-    if sim_conf.setup.fadc.type == "generic"
-        GenericFADC(sim_conf)
+function FADC(fadc_settings::PropDict)
+    if fadc_settings.type == "generic"
+        GenericFADC(fadc_settings)
     else
-        @info "FADC type $(sim_conf.setup.fadc.type) not implemented!\n
+        error("FADC type $(fadc_settings.type) not implemented!\n
         Available types: generic\n
-        Planned in the future: Flashcam, Struck"              
+        Planned in the future: Flashcam, Struck")
     end
 end
 

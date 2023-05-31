@@ -29,16 +29,17 @@ end
 """
     TrapFilter(sim_conf)
 
-PropDict -> TrapFilter 
+LegendGeSimConfig -> TrapFilter 
 
 Construct a TrapFilter instance based on simulation configuration given in <sim_conf>.
 """
-function TrapFilter(sim_conf::PropDict)
+function TrapFilter(trigger_settings::PropDict)
     T = Float32 # This should be somehow defined and be passed properly
     TrapFilter(
-        window_lengths = (sim_conf.setup.trigger.window_lengths[1],
-            sim_conf.setup.trigger.window_lengths[2], sim_conf.setup.trigger.window_lengths[3]),
-        threshold_keV = T(sim_conf.setup.trigger.threshold)u"keV"
+        window_lengths = (trigger_settings.window_lengths[1],
+            trigger_settings.window_lengths[2],
+            trigger_settings.window_lengths[3]),
+        threshold_keV = T(trigger_settings.threshold)u"keV"
     )
 end
 
@@ -46,7 +47,7 @@ end
 """
     Trigger(sim_conf)
 
-PropDict -> <Trigger>    
+LegendGeSimConfig -> <Trigger>    
 
 Construct a Trigger supertype instance based on settings given in <sim_conf>.
 The returned type depends on the given settings.
@@ -54,12 +55,12 @@ The returned type depends on the given settings.
 Currently only TrapFilter type is implemented.
 
 """
-function Trigger(sim_conf::PropDict)
-    if sim_conf.setup.trigger.type == "trapezoidal"
-        TrapFilter(sim_conf)
+function Trigger(trigger_settings::PropDict)
+    if trigger_settings.type == "trapezoidal"
+        TrapFilter(trigger_settings)
     else
-        @info "Trigger type $(sim_config.setup.trigger.type) not implemented!\n
-        Available type: trapezoidal"
+        error("Trigger type $(trigger_settings.type) not implemented!\n
+        Available type: trapezoidal")
     end
 end
 

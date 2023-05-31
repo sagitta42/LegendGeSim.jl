@@ -15,59 +15,82 @@ Simulation method: SolidStateDetectors
 
     "Computation: 3D or 2D (phi symmetry)"
     comp::AbstractString = "2D"
+
+    "Path to crystal jsons"
+    crystal_metadata_path::AbstractString = ""
+
+    "Name for cached simulation. Not caching if empty string"
+    cached_name::AbstractString = ""
 end
 
 
 """
-    SSDSimulator(::PropDict)
+    SSDSimulator(sim_conf)
 
--> SSDSimulator
+LegendGeSimConfig -> SSDSimulator
 
 Construct SSDSimulator instance based on simulation
     configuration given in <sim_conf>.
 
 Currently SSDSimulator does not have any parameters
 """
-function SSDSimulator(sim_conf::PropDict)
-    coord = haskey(sim_conf.simulation, :coordinates) ? sim_conf.simulation.coordinates : "cylindrical"
+# function SSDSimulator(sim_conf::LegendGeSimConfig)
+function SSDSimulator(simulation_settings::PropDict)
+    coord = haskey(simulation_settings, :coordinates) ? simulation_settings.coordinates : "cylindrical"
     if !(coord in ["cartesian", "cylindrical"])
-        @error "$coord coordinates not implemented!\n Available: cartesian, cylindrical"
+        error("$coord coordinates not implemented!\n Available: cartesian, cylindrical")
     end
 
-    comp = haskey(sim_conf.simulation, :computation) ? sim_conf.simulation.computation : "2D"
+    comp = haskey(simulation_settings, :computation) ? simulation_settings.computation : "2D"
     if !(comp in ["2D", "3D"])
-        @error "$comp computation not implemented!\n Available: 2D, 3D"
+        error("$comp computation not implemented!\n Available: 2D, 3D")
     end
 
-    SSDSimulator(coord, comp)
+    SSDSimulator(coord, comp, simulation_settings.crystal_metadata_path, simulation_settings.cached_name)
 end
 
 
 """
 Simulation method: siggen
 """
-struct SiggenSimulator <: PSSimulator
+@with_kw struct SiggenSimulator <: PSSimulator
     "Path to fieldgen settings"
     fieldgen_config::AbstractString
 
     "Drift velocity correction (?)"
     drift_vel::AbstractString
+
+    "Name for cached simulation. Not caching if empty string"
+    cached_name::AbstractString = ""    
 end
 
 
 """
     SiggeSimulator(sim_conf)
 
-PropDict -> SiggenSimulator
+    LegendGeSimConfig -> SiggenSimulator
 
 Construct SiggeSimulator instance based on simulation
     configuration given in <sim_conf>.
 """
-function SiggenSimulator(sim_conf::PropDict)
-    # @info "Taking fieldgen input from $(sim_conf.simulation.fieldgen_config)"
+function SiggenSimulator(simulation_settings::PropDict)
+    # check if provided paths exist
+    inputs = Dict(
+        "fieldgen_config" => haskey(simulation_settings, :fieldgen_config) ? simulation_settings.fieldgen_config : "",
+        "drift_vel" => haskey(simulation_settings, :drift_vel) ? simulation_settings.drift_vel : ""
+    )
+    for (param, path) in inputs
+        if (path != "") && !isfile(path)
+        @error "The file for $(param) that you provided does not exist: $(path)"
+        end
+    end
+
     SiggenSimulator( 
-        haskey(sim_conf.simulation, "fieldgen_config") ? sim_conf.simulation.fieldgen_config : "fieldgen_settings.txt",
-        haskey(sim_conf.simulation, "drift_vel") ? sim_conf.simulation.drift_vel : "drift_vel_tcorr.tab"
+        # haskey(simulation_settings, "fieldgen_config") ? simulation_settings.fieldgen_config : "fieldgen_settings.txt",
+        # haskey(simulation_settings, "drift_vel") ? simulation_settings.drift_vel : "drift_vel_tcorr.tab"
+        inputs["fieldgen_config"],
+        inputs["drift_vel"],
+        simulation_settings.cached_name
     )
 end
 
@@ -75,23 +98,40 @@ end
 """
     PSSimulator(sim_config)
 
-PropDict -> <PSSimulator>
+LegendGeSimConfig -> <PSSimulator>
 
 Construct a PSSSimulator supertype instance based on given simulation
     configuration <sim_config>.
 Returned type depends on the simulation
     method given in the config.
 """
-function PSSimulator(sim_config::PropDict)
-    @info "Simulation method: $(sim_config.simulation.method)"
-    if sim_config.simulation.method == "SSD"
-        SSDSimulator(sim_config)
-    elseif sim_config.simulation.method in ["siggen", "fieldgen"]
-        SiggenSimulator(sim_config)
+function PSSimulator(simulation_settings::PropDict)    
+    @info "Simulation method: $(simulation_settings.method)"
+
+    # defaults
+    if(!haskey(simulation_settings, :crystal_metadata_path))
+        simulation_settings[:crystal_metadata_path] = ""
+        # simulation_settings.crystal_metadata_path = crystal_metadata_path
+        # ToDo: move somewhere else - irrelevant if only geometry is constructed, or when simulation read from cache
+        @warn "No crystal metadata path given. Simulation with dummy constant impurity density."
+    elseif !ispath(simulation_settings.crystal_metadata_path)
+        @error "The path to crystal metadata you provided is not valid! ($simulation_settings.crystal_metadata_path)"
+    end
+
+    if(!haskey(simulation_settings, :cached_name))
+        simulation_settings[:cached_name] = ""
+        @warn "No cached name was given. Not caching the simulation."
+    end
+
+    if simulation_settings.method in ["SSD", "ssd"]
+        SSDSimulator(simulation_settings)
+    elseif simulation_settings.method in ["siggen", "fieldgen"]
+        SiggenSimulator(simulation_settings)
     else
-        println("This simulation method is not implemented!")
+        error("This simulation method is not implemented!")
     end
 end
+   
 
 # -------------------------------------------------------------------
 
@@ -115,7 +155,19 @@ function simulate_waveforms(stp_events::Table, detector::SolidStateDetectors.Sim
             Δt = 1u"ns",
             verbose = false);
 
-    waveforms = ArrayOfRDWaveforms(contact_charge_signals.waveform)
+    # SSD returns in units of "e" -> convert to eV
+    n_waveforms = size(contact_charge_signals.waveform, 1)
+    wf_array = Array{RDWaveform}(undef, n_waveforms)
+    for i = 1:n_waveforms
+        wf = contact_charge_signals.waveform[i]
+        wf_array[i] = RDWaveform(wf.time, ustrip.(wf.signal) .* germanium_ionization_energy) # units eV
+    end
+
+    # ToDo: SSD returns double the number of wfs, because also inverse ones from n+ contact
+    # -> just take the first half corr. to n_events in stp?
+    # -> filter in a smarter way by contact?
+
+    waveforms = ArrayOfRDWaveforms(wf_array)
 
     # convert to Tier1 format
     pss_table = Table(
